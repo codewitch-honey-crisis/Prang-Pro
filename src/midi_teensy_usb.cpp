@@ -71,5 +71,6 @@ sfx_result midi_out_teensy_usb::send(const midi_message& msg) {
         default:
             return sfx_result::invalid_format;
     }
+    usbMIDI.send_now();
     return sfx_result::success;
 }

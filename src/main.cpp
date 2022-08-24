@@ -679,14 +679,12 @@ void loop() {
             case midi_message_type::note_on:
                 note_on = true;
             case midi_message_type::note_off:
-                Serial.println("Note");
                 note = msg.msb();
                 vel = msg.lsb();
                 // is the note within our captured notes?
-                if (/*(msg.channel()) == 0 && */
+                if ((msg.channel()) == 0 && 
                     note >= base_note && 
                     note < base_note + (int)sampler.tracks_count()) {
-                        Serial.println("trigger");
                     if (note_on && vel > 0) {
                         quantizer.start(note - base_note);
                         last_timing = quantizer.last_timing();
@@ -699,7 +697,7 @@ void loop() {
                         } else if(last_timing==midi_quantizer_timing::late) {
                             px = color_t::red;
                         }   
-                        draw::filled_ellipse(lcd,rect16(point16(0,0),16),px);
+                        //draw::filled_ellipse(lcd,rect16(point16(0,0),16),px);
                     } else {
                         quantizer.stop(note - base_note);
                     }

@@ -6,7 +6,7 @@ class midi_in_teensy_usb_host final : public sfx::midi_input {
     bool m_initialized;
     USBHost m_usb_host;
     MIDIDevice m_in;
-    sfx::midi_buffer16 m_buffer;
+    sfx::midi_buffer32 m_buffer;
     void handle_message(const uint8_t* data,size_t size);
     static void handle_message_s(const uint8_t*data,size_t size,void* state);
 public:
