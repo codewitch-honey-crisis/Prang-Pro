@@ -4,8 +4,7 @@
 #include <sfx_midi_message.hpp>
 class note_tracker final {
     struct {
-        uint64_t low;
-        uint64_t high;
+        uint32_t bank[4];
     } m_notes[16];
 public:
     note_tracker();

@@ -62,14 +62,19 @@ using lcd_t = ili9341<LCD_DC,LCD_RST,LCD_BKL,lcd_bus_t,LCD_ROTATION,true,400,200
 
 using color_t = color<typename lcd_t::pixel_type>;
 
+#ifdef HIGH_PRECISION
 // stuff for making _gettimeofday() and std::chrono work
 volatile uint64_t chrono_tick_count;
 void chrono_tick() {
     ++chrono_tick_count;
 }
 IntervalTimer chrono_timer;
+#endif // HIGH_PRECISION
 
-midi_in_teensy_usb_host midi_in;
+USBHost usb_host;
+
+MIDIDevice midi_dev(usb_host);
+
 midi_out_teensy_usb midi_out;
 
 lcd_t lcd;
@@ -200,8 +205,71 @@ void update_tempo_mult() {
     draw::filled_rectangle(lcd, trc.inflate(100, 0), color_t::white);
     draw::text(lcd, trc, oti, color_t::black, color_t::white);  
 }
+void handle_midi(const uint8_t* data, size_t size, void* state) {
+    int base_note = base_octave * 12;
+    bool note_on = false;
+    midi_message msg;
+    int note;
+    int vel;
+    const_buffer_stream cbs(data,size);
+    midi_stream::decode_message(false,cbs,&msg);
+    if(msg.status) {
+        switch (msg.type()) {
+            case midi_message_type::note_on:
+                note_on = true;
+            case midi_message_type::note_off:
+                note = msg.msb();
+                vel = msg.lsb();
+                // is the note within our captured notes?
+                if ((msg.channel()) == 0 && 
+                    note >= base_note && 
+                    note < base_note + (int)sampler.tracks_count()) {
+                    if (note_on && vel > 0) {
+                        quantizer.start(note - base_note);
+                        last_timing = quantizer.last_timing();
+                        last_timing_ts = millis()+1000;
+                        auto px = color_t::white;
+                        if(last_timing==midi_quantizer_timing::exact) {
+                            px = color_t::green;
+                        } else if(last_timing==midi_quantizer_timing::early) {
+                            px = color_t::blue;
+                        } else if(last_timing==midi_quantizer_timing::late) {
+                            px = color_t::red;
+                        }   
+                        draw::filled_ellipse(lcd,rect16(point16(0,0),16),px);
+                    } else {
+                        quantizer.stop(note - base_note);
+                    }
+                } else {
+                    // just forward it
+                    midi_out.send(msg);
+                }
+                break;
+            case midi_message_type::polyphonic_pressure:
+            case midi_message_type::control_change:
+            case midi_message_type::pitch_wheel_change:
+            case midi_message_type::song_position:
+            case midi_message_type::program_change:
+            case midi_message_type::channel_pressure:
+            case midi_message_type::song_select:
+            case midi_message_type::reset:
+            case midi_message_type::system_exclusive:
+            case midi_message_type::end_system_exclusive:
+            case midi_message_type::active_sensing:
+            case midi_message_type::start_playback:
+            case midi_message_type::continue_playback:
+            case midi_message_type::stop_playback:
+            case midi_message_type::tune_request:
+            case midi_message_type::timing_clock:
+                midi_out.send(msg);
+                break;
+        }
+    }
+}
 void setup() {
+#ifdef HIGH_PRECISION
     chrono_timer.begin(chrono_tick,1);
+#endif
     bool reset_on_boot = false;
     off_ts = 0;
     encoder_old_count = 0;
@@ -225,7 +293,8 @@ void setup() {
     button_a.update();
     button_b.update();
     encoder.readAndReset();
-    midi_in.initialize();
+    usb_host.begin();
+    midi_dev.setHandleMessage(handle_midi,nullptr);
     midi_out.initialize();
     
     sampler.output(&midi_out);
@@ -642,15 +711,16 @@ restart:
         goto restart;
     }
     quantizer.quantize_beats(quantize_beats);
+    sampler.tempo_multiplier(tempo_multiplier);
     sampler.output(&midi_out);
     for (size_t i = 0; i < sampler.tracks_count(); ++i) {
         sampler.stop(i);
     }
-    sampler.tempo_multiplier(tempo_multiplier);
     encoder_old_count = encoder.read() / 4;
     
     
 }
+
 void loop() {
     int64_t enc = encoder.read() / 4;
     if(encoder_old_count!=enc) {
@@ -668,64 +738,8 @@ void loop() {
             }
         }
     }
-    int base_note = base_octave * 12;
-    bool note_on = false;
-    midi_in.update();
-    midi_message msg;
-    int note;
-    int vel;
-    if(midi_in.receive(&msg)==sfx_result::success) {
-        switch (msg.type()) {
-            case midi_message_type::note_on:
-                note_on = true;
-            case midi_message_type::note_off:
-                note = msg.msb();
-                vel = msg.lsb();
-                // is the note within our captured notes?
-                if ((msg.channel()) == 0 && 
-                    note >= base_note && 
-                    note < base_note + (int)sampler.tracks_count()) {
-                    if (note_on && vel > 0) {
-                        quantizer.start(note - base_note);
-                        last_timing = quantizer.last_timing();
-                        last_timing_ts = millis()+1000;
-                        auto px = color_t::white;
-                        if(last_timing==midi_quantizer_timing::exact) {
-                            px = color_t::green;
-                        } else if(last_timing==midi_quantizer_timing::early) {
-                            px = color_t::blue;
-                        } else if(last_timing==midi_quantizer_timing::late) {
-                            px = color_t::red;
-                        }   
-                        //draw::filled_ellipse(lcd,rect16(point16(0,0),16),px);
-                    } else {
-                        quantizer.stop(note - base_note);
-                    }
-                } else {
-                    // just forward it
-                    midi_out.send(msg);
-                }
-                break;
-            case midi_message_type::polyphonic_pressure:
-            case midi_message_type::control_change:
-            case midi_message_type::pitch_wheel_change:
-            case midi_message_type::song_position:
-            case midi_message_type::program_change:
-            case midi_message_type::channel_pressure:
-            case midi_message_type::song_select:
-            case midi_message_type::reset:
-            case midi_message_type::system_exclusive:
-            case midi_message_type::end_system_exclusive:
-            case midi_message_type::active_sensing:
-            case midi_message_type::start_playback:
-            case midi_message_type::continue_playback:
-            case midi_message_type::stop_playback:
-            case midi_message_type::tune_request:
-            case midi_message_type::timing_clock:
-                midi_out.send(msg);
-                break;
-        }
-    }
+    usb_host.Task();
+    midi_dev.read();
     sampler.update();
     if(last_timing_ts && millis()>=last_timing_ts) {
         last_timing_ts = 0;
@@ -734,6 +748,7 @@ void loop() {
     
 }
 // implement _gettimeofday so std::chrono (used by SFX) works
+#ifdef HIGH_PRECISION
 extern "C" {
   int _gettimeofday( struct timeval *tv, void *tzvp )
   {
@@ -747,3 +762,21 @@ extern "C" {
     return 0;  // return non-zero for error
   } // end _gettimeofday()
 }
+#else
+extern "C" int _gettimeofday(struct timeval *tv, void *ignore) {
+  uint32_t hi1 = SNVS_HPRTCMR;
+  uint32_t lo1 = SNVS_HPRTCLR;
+  while (1) {
+    uint32_t hi2 = SNVS_HPRTCMR;  // ref manual 20.3.3.1.3 page 1231
+    uint32_t lo2 = SNVS_HPRTCLR;
+    if (lo1 == lo2 && hi1 == hi2) {
+        
+      tv->tv_sec = (hi2 << 17) | (lo2 >> 15);
+      tv->tv_usec = ((lo2 & 0x7FFF) * 15625) >> 9;
+      return 0;
+    }
+    hi1 = hi2;
+    lo1 = lo2;
+  }
+}
+#endif

@@ -183,7 +183,9 @@ sfx_result midi_sampler::start(size_t index, long long advance) {
         return sfx_result::invalid_argument;
     }
     track& t = m_tracks[index];
-    stop(index);
+    if(started(index)) {
+        stop(index);
+    }
     if(advance>0) {
         const_buffer_stream cbs(t.buffer,t.buffer_size);
         t.clock.elapsed(advance);
